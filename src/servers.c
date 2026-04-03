@@ -13,13 +13,30 @@
 
 static DISCORD_SERVER_CONNECT_REC *create(void) {
 	debug();
-	return g_new0(DISCORD_SERVER_CONNECT_REC, 1);
+	DISCORD_SERVER_CONNECT_REC *conn = g_new0(DISCORD_SERVER_CONNECT_REC, 1);
+	conn->type = module_get_uniq_id("SERVER CONNECT", 0);
+	return conn;
+}
+
+static gboolean manual_connect(gpointer data) {
+	DISCORD_SERVER_REC *server = data;
+	CHAT_PROTOCOL_REC *proto = chat_protocol_find(PROTOCOL_NAME);
+	if (proto != NULL && proto->server_connect != NULL) {
+		proto->server_connect((SERVER_REC *)server);
+	}
+	return FALSE;
 }
 
 static DISCORD_SERVER_REC *init(DISCORD_SERVER_CONNECT_REC *connrec) {
 	debug();
 	DISCORD_SERVER_REC *server = g_new0(DISCORD_SERVER_REC, 1);
+	server->type = module_get_uniq_id("SERVER", 0);
 	server->chat_type = PROTOCOL;
+	server->connect_tag = -1;
+	server->readtag = -1;
+
+	connrec->chat_type = PROTOCOL;
+	connrec->no_connect = 1;
 	server->connrec = connrec;
 
 	server->tok = g_strdup(connrec->tok);
@@ -29,6 +46,8 @@ static DISCORD_SERVER_REC *init(DISCORD_SERVER_CONNECT_REC *connrec) {
 
 	server_connect_ref(SERVER_CONNECT(connrec));
 	server_connect_init((SERVER_REC *) server);
+
+	g_idle_add(manual_connect, server);
 	return server;
 }
 
@@ -63,6 +82,7 @@ static void connect(DISCORD_SERVER_REC *server) {
 	 * internal state machine without letting it try to open a socket or
 	 * send IRC commands (like CAP LS) that would result in Cloudflare errors.
 	 */
+	server->connected = 1;
 	server_connect_finished((SERVER_REC *) server);
 	return;
 }
