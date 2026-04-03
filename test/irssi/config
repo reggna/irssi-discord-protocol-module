@@ -1,0 +1,30 @@
+servers = (
+  {
+    address = "gateway.discord.gg";
+    chatnet = "Discord";
+    port = "443";
+    tls = "yes";
+    tls_verify = "yes";
+    password = "<TOKEN>";
+    autoconnect = "no";
+  }
+);
+
+chatnets = { Discord = { type = "Discord"; username = "BotUser"; }; };
+
+channels = (
+  {
+    name = "343599756821397504";
+    # Example Channel ID
+    chatnet = "Discord";
+    autojoin = "no";
+  }
+);
+
+settings = {
+  core = {
+    real_name = "Discord Bot";
+    user_name = "discord";
+    nick = "DiscordBot";
+  };
+};

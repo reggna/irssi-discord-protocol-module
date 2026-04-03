@@ -1,0 +1,3 @@
+[submodule "include/irssi"]
+	path = include/irssi
+	url = https://github.com/irssi/irssi.git
