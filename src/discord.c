@@ -193,8 +193,29 @@ static gpointer gateway_thread_func(gpointer data) {
 	size_t rlen;
 	const struct curl_ws_frame *meta;
 	char buffer[16384];
+	gint64 last_heartbeat = 0;
 
 	while (gw->active) {
+		if (gw->heartbeat_interval > 0) {
+			gint64 now = g_get_monotonic_time() / 1000;
+			if (last_heartbeat == 0 || now - last_heartbeat >= gw->heartbeat_interval) {
+				json_t *hb = json_object();
+				json_object_set_new(hb, "op", json_integer(1));
+				if (gw->last_sequence > 0) {
+					json_object_set_new(hb, "d", json_integer(gw->last_sequence));
+				} else {
+					json_object_set_new(hb, "d", json_null());
+				}
+
+				char *payload = json_dumps(hb, 0);
+				size_t sent;
+				curl_ws_send(curl, payload, strlen(payload), &sent, 0, CURLWS_TEXT);
+				free(payload);
+				json_decref(hb);
+				last_heartbeat = now;
+			}
+		}
+
 		res = curl_ws_recv(curl, buffer, sizeof(buffer) - 1, &rlen, &meta);
 		if (res == CURLE_OK) {
 			buffer[rlen] = '\0';
@@ -205,7 +226,8 @@ static gpointer gateway_thread_func(gpointer data) {
 				if (op == 10) { // HELLO
 					json_t *d = json_object_get(root, "d");
 					gw->heartbeat_interval = json_integer_value(json_object_get(d, "heartbeat_interval"));
-					
+					last_heartbeat = g_get_monotonic_time() / 1000; // start heartbeating
+
 					// Send Identify
 					if (gw->tok == NULL) {
 						push_log("Gateway Identify failed: No token provided");
