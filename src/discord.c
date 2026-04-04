@@ -51,11 +51,15 @@ void discord_send_message(token tok, const char *target, string msg) {
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 		curl_easy_setopt(curl, CURLOPT_URL, g_strdup_printf("%s/channels/%s/messages", BASE_API, target));
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data_str);
+		char *data = NULL;
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, string_data);
 
 		CURLcode res = curl_easy_perform(curl);
 		if(res != CURLE_OK)
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR, "curl_easy_perform() failed: %s", curl_easy_strerror(res));
 
+		g_free(data);
 		free(json_data_str);
 		json_decref(root);
 		curl_slist_free_all_safe(headers);
