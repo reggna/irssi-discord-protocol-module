@@ -92,6 +92,14 @@ static void destroy(SERVER_CONNECT_REC *conn) {
 	return;
 }
 
+static void sig_disconnected(SERVER_REC *server) {
+	if (!IS_DISCORD_SERVER(server))
+		return;
+
+	debug();
+	discord_gateway_disconnect(server->tag);
+}
+
 void servers_protocol_init(CHAT_PROTOCOL_REC *rec) {
 	rec->create_server_connect = (SERVER_CONNECT_REC *(*)(void)) create;
 	rec->server_init_connect = (SERVER_REC *(*)(SERVER_CONNECT_REC *)) init;
@@ -99,4 +107,5 @@ void servers_protocol_init(CHAT_PROTOCOL_REC *rec) {
 	rec->destroy_server_connect = destroy;
 
 	signal_add_first("server connected", (SIGNAL_FUNC) sig_connected);
+	signal_add("server disconnected", (SIGNAL_FUNC) sig_disconnected);
 }

@@ -124,7 +124,8 @@ static discord_gateway_t *gateway = NULL;
 
 typedef enum {
 	GW_MSG_CHAT,
-	GW_MSG_LOG
+	GW_MSG_LOG,
+	GW_MSG_DISCONNECT
 } gw_msg_type_t;
 
 typedef struct {
@@ -169,14 +170,40 @@ static gboolean process_gateway_msgs(gpointer data) {
 			}
 		} else if (msg->type == GW_MSG_LOG) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE, "Discord: %s", msg->content);
+		} else if (msg->type == GW_MSG_DISCONNECT) {
+			SERVER_REC *server = server_find_tag(gateway->server_tag);
+			if (server) {
+				server_disconnect(server);
+				g_free(msg);
+				return FALSE; // gateway is now NULL
+			}
 		}
-		
+
 		g_free(msg->channel_id);
 		g_free(msg->username);
 		g_free(msg->content);
 		g_free(msg);
 	}
 	return TRUE;
+}
+
+static void send_heartbeat(CURL *curl, discord_gateway_t *gw) {
+	json_t *hb = json_object();
+	json_object_set_new(hb, "op", json_integer(1));
+	if (gw->last_sequence > 0) {
+		json_object_set_new(hb, "d", json_integer(gw->last_sequence));
+	} else {
+		json_object_set_new(hb, "d", json_null());
+	}
+
+	char *payload = json_dumps(hb, 0);
+	size_t sent;
+	CURLcode res = curl_ws_send(curl, payload, strlen(payload), &sent, 0, CURLWS_TEXT);
+	if (res != CURLE_OK) {
+		push_log("Failed to send heartbeat: %s", curl_easy_strerror(res));
+	}
+	free(payload);
+	json_decref(hb);
 }
 
 static gpointer gateway_thread_func(gpointer data) {
@@ -200,28 +227,17 @@ static gpointer gateway_thread_func(gpointer data) {
 	gint64 last_heartbeat = 0;
 
 	while (gw->active) {
+		gint64 now = g_get_monotonic_time() / 1000;
 		if (gw->heartbeat_interval > 0) {
-			gint64 now = g_get_monotonic_time() / 1000;
 			if (last_heartbeat == 0 || now - last_heartbeat >= gw->heartbeat_interval) {
-				json_t *hb = json_object();
-				json_object_set_new(hb, "op", json_integer(1));
-				if (gw->last_sequence > 0) {
-					json_object_set_new(hb, "d", json_integer(gw->last_sequence));
-				} else {
-					json_object_set_new(hb, "d", json_null());
-				}
-
-				char *payload = json_dumps(hb, 0);
-				size_t sent;
-				curl_ws_send(curl, payload, strlen(payload), &sent, 0, CURLWS_TEXT);
-				free(payload);
-				json_decref(hb);
+				send_heartbeat(curl, gw);
 				last_heartbeat = now;
 			}
 		}
 
 		res = curl_ws_recv(curl, buffer, sizeof(buffer) - 1, &rlen, &meta);
 		if (res == CURLE_OK) {
+			if (rlen == 0) continue;
 			buffer[rlen] = '\0';
 			json_error_t error;
 			json_t *root = json_loads(buffer, 0, &error);
@@ -230,30 +246,33 @@ static gpointer gateway_thread_func(gpointer data) {
 				if (op == 10) { // HELLO
 					json_t *d = json_object_get(root, "d");
 					gw->heartbeat_interval = json_integer_value(json_object_get(d, "heartbeat_interval"));
-					last_heartbeat = g_get_monotonic_time() / 1000; // start heartbeating
+					push_log("Gateway HELLO, heartbeat interval: %dms", gw->heartbeat_interval);
+					last_heartbeat = now; // start heartbeating
 
 					// Send Identify
 					if (gw->tok == NULL) {
 						push_log("Gateway Identify failed: No token provided");
-						break;
+						gw->active = FALSE;
+					} else {
+						json_t *ident = json_object();
+						json_object_set_new(ident, "op", json_integer(2));
+						json_t *id_d = json_object();
+						json_object_set_new(id_d, "token", json_string(gw->tok));
+						json_object_set_new(id_d, "intents", json_integer(512 | 32768));
+						json_t *props = json_object();
+						json_object_set_new(props, "os", json_string("linux"));
+						json_object_set_new(props, "browser", json_string("irssi"));
+						json_object_set_new(props, "device", json_string("irssi"));
+						json_object_set_new(id_d, "properties", props);
+						json_object_set_new(ident, "d", id_d);
+
+						char *payload = json_dumps(ident, 0);
+						size_t sent;
+						curl_ws_send(curl, payload, strlen(payload), &sent, 0, CURLWS_TEXT);
+						free(payload);
+						json_decref(ident);
+						push_log("Gateway Identify sent");
 					}
-					json_t *ident = json_object();
-					json_object_set_new(ident, "op", json_integer(2));
-					json_t *id_d = json_object();
-					json_object_set_new(id_d, "token", json_string(gw->tok));
-					json_object_set_new(id_d, "intents", json_integer(512 | 32768));
-					json_t *props = json_object();
-					json_object_set_new(props, "os", json_string("linux"));
-					json_object_set_new(props, "browser", json_string("irssi"));
-					json_object_set_new(props, "device", json_string("irssi"));
-					json_object_set_new(id_d, "properties", props);
-					json_object_set_new(ident, "d", id_d);
-					
-					char *payload = json_dumps(ident, 0);
-					size_t sent;
-					curl_ws_send(curl, payload, strlen(payload), &sent, 0, CURLWS_TEXT);
-					free(payload);
-					json_decref(ident);
 				} else if (op == 0) { // Dispatch
 					gw->last_sequence = json_integer_value(json_object_get(root, "s"));
 					const char *t = json_string_value(json_object_get(root, "t"));
@@ -271,9 +290,29 @@ static gpointer gateway_thread_func(gpointer data) {
 							msg->content = g_strdup(content);
 							g_async_queue_push(gw->queue, msg);
 						}
+					} else if (g_strcmp0(t, "READY") == 0) {
+						push_log("Gateway READY");
 					}
+				} else if (op == 1) { // Heartbeat Request
+					push_log("Gateway requested heartbeat");
+					send_heartbeat(curl, gw);
+					last_heartbeat = now;
+				} else if (op == 7) { // Reconnect Request
+					push_log("Gateway requested reconnect");
+					gw->active = FALSE;
+				} else if (op == 9) { // Invalid Session
+					push_log("Gateway session invalid");
+					gw->active = FALSE;
+				} else if (op == 11) { // Heartbeat ACK
+					// Good, keep going
 				}
 				json_decref(root);
+			} else {
+				// Failed to parse JSON, could be a truncated frame
+				if (meta->bytesleft > 0) {
+					// We should really buffer this, but for now just log it
+					// push_log("Received partial frame, ignoring (unsupported)");
+				}
 			}
 		} else if (res == CURLE_AGAIN) {
 			g_usleep(100000); // 100ms
@@ -282,7 +321,11 @@ static gpointer gateway_thread_func(gpointer data) {
 			break;
 		}
 	}
-	
+
+	gateway_msg_t *msg = g_new0(gateway_msg_t, 1);
+	msg->type = GW_MSG_DISCONNECT;
+	g_async_queue_push(gw->queue, msg);
+
 	curl_easy_cleanup(curl);
 	return NULL;
 }
