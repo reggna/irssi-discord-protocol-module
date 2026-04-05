@@ -104,6 +104,10 @@ json_t *discord_get_guild_info(token tok, const char *guild) {
 	return generic_get_request(tok, g_strdup_printf("%s/guilds/%s", BASE_API, guild));
 }
 
+json_t *discord_get_guild_members(token tok, const char *guild) {
+	return generic_get_request(tok, g_strdup_printf("%s/guilds/%s/members?limit=1000", BASE_API, guild));
+}
+
 json_t *discord_get_message_history(token tok, const char *channel) {
 	return generic_get_request(tok, g_strdup_printf("%s/channels/%s/messages", BASE_API, channel));
 }

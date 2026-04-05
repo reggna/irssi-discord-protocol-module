@@ -9,6 +9,7 @@
 
 #include <core/channels.h>
 #include <core/servers.h>
+#include <core/nicklist.h>
 
 #include "utils.h"
 
@@ -94,8 +95,61 @@ static void join(DISCORD_SERVER_REC *server, const char *name, int automatic) {
 			break;
 	}
 	
-	create(server, name, visible_name, automatic);
+	CHANNEL_REC *rec = create(server, name, visible_name, automatic);
 	g_free(visible_name);
+
+	// Populate nicklist
+	switch(chan_type) {
+		case DISCORD_CHAN_GUILD_TEXT:
+		case DISCORD_CHAN_GUILD_NEWS:
+		case DISCORD_CHAN_GUILD_NEWS_THREAD:
+		case DISCORD_CHAN_GUILD_PUBLIC_THREAD:
+		case DISCORD_CHAN_GUILD_PRIVATE_THREAD: {
+			const char *guild_id = json_string_value(json_object_get(root, "guild_id"));
+			if (guild_id) {
+				json_t *members = discord_get_guild_members(server->tok, guild_id);
+				if (members && json_is_array(members)) {
+					size_t size = json_array_size(members);
+					for (size_t i = 0; i < size; i++) {
+						json_t *member = json_array_get(members, i);
+						json_t *user = json_object_get(member, "user");
+						const char *username = json_string_value(json_object_get(user, "username"));
+						if (username) {
+							NICK_REC *nickrec = g_new0(NICK_REC, 1);
+							nickrec->nick = g_strdup(username);
+							nicklist_insert(rec, nickrec);
+
+							if (server->nick && g_ascii_strcasecmp(username, server->nick) == 0) {
+								nicklist_set_own(rec, nickrec);
+							}
+						}
+					}
+					json_decref(members);
+				}
+			}
+			break;
+		}
+		case DISCORD_CHAN_GROUP_DM: {
+			json_t *recipients = json_object_get(root, "recipients");
+			if (recipients && json_is_array(recipients)) {
+				size_t size = json_array_size(recipients);
+				for (size_t i = 0; i < size; i++) {
+					json_t *user = json_array_get(recipients, i);
+					const char *username = json_string_value(json_object_get(user, "username"));
+					if (username) {
+						NICK_REC *nickrec = g_new0(NICK_REC, 1);
+						nickrec->nick = g_strdup(username);
+						nicklist_insert(rec, nickrec);
+
+						if (server->nick && g_ascii_strcasecmp(username, server->nick) == 0) {
+							nicklist_set_own(rec, nickrec);
+						}
+					}
+				}
+			}
+			break;
+		}
+	}
 
 	json_t *history = discord_get_message_history(server->tok, name);
 	if (history && json_is_array(history)) {
@@ -128,6 +182,14 @@ static void send_message(DISCORD_SERVER_REC *server, const char *target, const c
 	discord_send_message(server->tok, target, msg);
 }
 
+static int isnickflag(SERVER_REC *server, char flag) {
+	return FALSE;
+}
+
+static const char *get_nick_flags(SERVER_REC *server) {
+	return "";
+}
+
 static void sig_connected(SERVER_REC *server) {
 	/*
 	 * Global signal: Ensure we only initialize Discord-specific function pointers.
@@ -138,7 +200,9 @@ static void sig_connected(SERVER_REC *server) {
 		return;
 
 	server->channels_join = (void (*)(SERVER_REC *, const char *, int)) join;
+	server->isnickflag = isnickflag;
 	server->ischannel = (int (*)(SERVER_REC *, const char *)) is_channel;
+	server->get_nick_flags = get_nick_flags;
 	server->send_message = (void (*)(SERVER_REC *, const char *, const char *, int))send_message;
 }
 

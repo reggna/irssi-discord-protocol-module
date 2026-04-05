@@ -9,6 +9,7 @@ A protocol module for [Irssi](https://irssi.org/) that provides Discord support 
 - **Real-time Updates:** Uses a background thread and WebSockets (`libcurl`) to receive messages in real-time.
 - **Bot Token Authentication:** Automatic `Bot ` prefix handling—just provide your raw token.
 - **Message History:** Fetches recent message history upon joining a channel or starting a query, displayed in the correct chronological order.
+- **Nicklist Support:** Supports the `/names` list for Discord channels and Group DMs, allowing users to see who's in the channel.
 - **Non-blocking UI:** Real-time messages are processed via a background thread to prevent Irssi's UI from hanging.
 
 ## Prerequisites

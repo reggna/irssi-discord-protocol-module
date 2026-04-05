@@ -17,6 +17,7 @@ void discord_core_deinit(void);
 void discord_send_message(token tok, const char *target, string msg);
 json_t *discord_get_channel_info(token tok, const char *channel);
 json_t *discord_get_guild_info(token tok, const char *guild);
+json_t *discord_get_guild_members(token tok, const char *guild);
 json_t *discord_get_message_history(token tok, const char *channel);
 
 // Gateway functions
